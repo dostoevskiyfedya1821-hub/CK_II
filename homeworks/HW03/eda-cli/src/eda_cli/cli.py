@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
 
 import pandas as pd
 import typer
@@ -72,7 +71,11 @@ def report(
 
         # Существующий параметр
         max_hist_columns: int = typer.Option(6, help="Максимум числовых колонок для гистограмм."),
-
+        top_k_categories: int = typer.Option(
+            5,
+            "--top-k-categories",
+            help="Top-K значений для категориальных признаков.",
+        ),
         # Новые параметры
         title: str = typer.Option(
             "Data Quality and Exploratory Data Analysis Report",
@@ -109,10 +112,10 @@ def report(
     summary_df = flatten_summary_for_print(summary)
     missing_df = missing_table(df)
     corr_df = correlation_matrix(df)
-    top_cats = top_categories(df)
+    top_cats = top_categories(df, max_columns=5, top_k=top_k_categories)
 
     # 2. Качество в целом
-    quality_flags = compute_quality_flags(df, summary, missing_df)
+    quality_flags = compute_quality_flags(summary, missing_df, df=df)
 
     # 3. Сохраняем табличные артефакты
     summary_df.to_csv(out_root / "summary.csv", index=False)
@@ -157,9 +160,12 @@ def report(
         f.write(f"- Слишком много пропусков: **{quality_flags['too_many_missing']}**\n")
 
         # Добавляем новые флаги из core.py
-        f.write(f"- Есть константные колонки: **{quality_flags['has_constant_columns']}**\n")
+        f.write(f"- Константные колонки: **{quality_flags['has_constant_columns']}** {quality_flags.get('constant_columns', [])}\n")
         f.write(
             f"- Есть колонки со слишком большим количеством нулей (>{quality_flags['zero_share_threshold']:.0%}): **{quality_flags['has_many_zero_values']}**\n\n")
+        # Явное использование дополнительных метрик качества
+        f.write(f"- min_unique_values_count: **{quality_flags['min_unique_values_count']}**\n")
+        f.write(f"- max_zero_values_share: **{quality_flags['max_zero_values_share']:.2%}**\n")
 
         f.write("## Колонки\n\n")
         f.write("См. файл `summary.csv`.\n\n")
@@ -173,7 +179,9 @@ def report(
             f.write("Нет колонок, где доля пропусков выше заданного порога.\n\n")
         else:
             f.write(f"Следующие колонки имеют долю пропусков ≥ **{min_missing_share:.2%}**:\n\n")
-            f.write(problem_cols.to_markdown(floatfmt=".2%"))
+            f.write("```text\n")
+            f.write(problem_cols.to_string())
+            f.write("\n```\n\n")
             f.write("\n\n")
 
         f.write("## Корреляция числовых признаков\n\n")

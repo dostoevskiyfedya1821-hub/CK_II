@@ -172,12 +172,15 @@ def top_categories(
 
     return result
 
-def compute_quality_flags(df: pd.DataFrame, summary: DatasetSummary, missing_df: pd.DataFrame) -> Dict[str, Any]:
+def compute_quality_flags(
+    summary: DatasetSummary,
+    missing_df: pd.DataFrame,
+    *,
+    df: Optional[pd.DataFrame] = None,
+) -> Dict[str, Any]:
     """
-    Простейшие эвристики «качества» данных:
-    - слишком много пропусков;
-    - подозрительно мало строк;
-    и т.п.
+    Считает quality-флаги и интегральный quality_score.
+    df опционален: нужен для эвристик по нулям/unique (если не передан — считаем по summary).
     """
     flags: Dict[str, Any] = {}
     flags["too_few_rows"] = summary.n_rows < 100
@@ -187,50 +190,55 @@ def compute_quality_flags(df: pd.DataFrame, summary: DatasetSummary, missing_df:
     flags["max_missing_share"] = max_missing_share
     flags["too_many_missing"] = max_missing_share > 0.5
 
-    # Новые эвристики качества данных
+    # --- Константные колонки / min_unique_values_count ---
+    if df is not None and not df.empty:
+        unique_non_null = df.nunique(dropna=True)
+        non_null_counts = df.notna().sum()
 
-    # 1. has_constant_columns: Проверка на колонки с константными значениями (уникальных <= 1)
-    min_unique = df.nunique(dropna=False).min() if summary.n_cols > 0 else 0
-    has_constant_cols = (min_unique <= 1)
-    flags["has_constant_columns"] = has_constant_cols
+        constant_cols = [
+            col for col in df.columns
+            if non_null_counts[col] > 0 and unique_non_null[col] <= 1
+        ]
+        min_unique = int(unique_non_null.min()) if len(unique_non_null) else 0
+    else:
+        constant_cols = [c.name for c in summary.columns if c.non_null > 0 and c.unique <= 1]
+        min_unique = min([c.unique for c in summary.columns if c.non_null > 0], default=0)
+
+    flags["has_constant_columns"] = len(constant_cols) > 0
+    flags["constant_columns"] = constant_cols
     flags["min_unique_values_count"] = int(min_unique)
 
-    # 2. has_many_zero_values: Проверка на слишком большое количество нулей в числовых колонках
-    ZERO_SHARE_THRESHOLD = 0.8  # Порог доли нулей (80%)
-    numeric_df = df.select_dtypes(include="number")
-
-    if not numeric_df.empty and summary.n_rows > 0:
-        # Считаем долю нулей по каждой числовой колонке
-        zero_share = (numeric_df == 0).sum() / summary.n_rows
-        max_zero_share = zero_share.max()
-        has_many_zeros = (max_zero_share > ZERO_SHARE_THRESHOLD)
-    else:
-        max_zero_share = 0.0
-        has_many_zeros = False
-
-    flags["has_many_zero_values"] = has_many_zeros
-    flags["max_zero_values_share"] = float(max_zero_share)
+    # --- Нули в числовых / max_zero_values_share ---
+    ZERO_SHARE_THRESHOLD = 0.8
     flags["zero_share_threshold"] = ZERO_SHARE_THRESHOLD
 
-    # Скорректированный «скор» качества
+    if df is not None and not df.empty and summary.n_rows > 0:
+        numeric_df = df.select_dtypes(include="number")
+        if not numeric_df.empty:
+            zero_share = (numeric_df == 0).sum() / summary.n_rows
+            max_zero_share = float(zero_share.max())
+        else:
+            max_zero_share = 0.0
+    else:
+        max_zero_share = 0.0
 
+    flags["max_zero_values_share"] = float(max_zero_share)
+    flags["has_many_zero_values"] = max_zero_share > ZERO_SHARE_THRESHOLD
+
+    # --- quality_score ---
     score = 1.0
-    score -= max_missing_share  # чем больше пропусков, тем хуже
+    score -= max_missing_share
 
     if flags["too_few_rows"]:
         score -= 0.2
     if flags["too_many_columns"]:
         score -= 0.1
+    if flags["min_unique_values_count"] <= 1:
+        score -= 0.15
+    if flags["max_zero_values_share"] > ZERO_SHARE_THRESHOLD:
+        score -= 0.10
 
-    # Учет новых флагов
-    if flags["has_constant_columns"]:
-        score -= 0.15  # Снижаем скор за наличие бесполезной колонки
-    if flags["has_many_zero_values"]:
-        score -= 0.10  # Снижаем скор, если в данных много нулей
-
-    score = max(0.0, min(1.0, score))
-    flags["quality_score"] = score
-
+    flags["quality_score"] = max(0.0, min(1.0, score))
     return flags
 
 
@@ -301,12 +309,7 @@ def make_json_summary(
         },
         # Обязательное приведение quality_score к нативному float
         "quality_score": float(quality_flags["quality_score"]),
-        "quality_flags": {
-            # Убеждаемся, что все флаги и пороги имеют нативные типы
-            k: float(v) if isinstance(v, (int, float, bool)) and k.endswith("_share") else bool(v) if isinstance(v, bool) else int(v) if isinstance(v, int) else v
-            for k, v in quality_flags.items()
-            if k not in ["quality_score", "max_missing_share"]
-        },
+        "quality_flags": {k: v for k, v in quality_flags.items() if k not in ["quality_score"]},
     }
 
     # 2. Список "проблемных" колонок
@@ -328,17 +331,20 @@ def make_json_summary(
 
     # Эвристика 2: константные колонки (уникальных <= 1)
     if quality_flags["has_constant_columns"]:
-        unique_counts = df.nunique(dropna=True)
-        constant_cols_names = unique_counts[unique_counts <= 1].index.tolist()
+        unique_non_null = df.nunique(dropna=True)
+        non_null_counts = df.notna().sum()
+
+        constant_cols_names = [
+            col for col in df.columns
+            if non_null_counts[col] > 0 and unique_non_null[col] <= 1
+        ]
 
         for col_name in constant_cols_names:
-            # Проверяем, не является ли колонка только пропусками, и не добавлена ли она уже
-            if col_name not in [pc['column'] for pc in problem_cols]:
+            if col_name not in [pc["column"] for pc in problem_cols]:
                 problem_cols.append({
                     "column": col_name,
                     "reason": "is_constant",
-                    # !!! ЯВНОЕ ПРИВЕДЕНИЕ К int !!!
-                    "value": int(df[col_name].nunique(dropna=True)),
+                    "value": int(unique_non_null[col_name]),
                     "threshold": 1,
                 })
 

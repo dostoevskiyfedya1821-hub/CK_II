@@ -17,7 +17,7 @@ from eda_cli.core import (
 def _sample_df() -> pd.DataFrame:
     return pd.DataFrame(
         {
-            "age": [10, 20, 30, None],
+            "age": pd.Series([10, 20, 30, None], dtype="float"),
             "height": [140, 150, 160, 170],
             "city": ["A", "B", "A", None],
         }
@@ -47,7 +47,7 @@ def test_missing_table_and_quality_flags():
 
     summary = summarize_dataset(df)
     # ИСПРАВЛЕНИЕ: Передаем df как первый аргумент
-    flags = compute_quality_flags(df, summary, missing_df)
+    flags = compute_quality_flags(summary, missing_df)
     assert 0.0 <= flags["quality_score"] <= 1.0
 
 
@@ -55,7 +55,8 @@ def test_correlation_and_top_categories():
     df = _sample_df()
     corr = correlation_matrix(df)
     # корреляция между age и height существует
-    assert "age" in corr.columns or corr.empty is False
+    assert not corr.empty
+    assert "age" in corr.columns
 
     top_cats = top_categories(df, max_columns=5, top_k=2)
     assert "city" in top_cats
@@ -84,7 +85,7 @@ def test_has_constant_columns_flag():
     missing_df = missing_table(df)
 
     # Вызов функции
-    flags = compute_quality_flags(df, summary, missing_df)
+    flags = compute_quality_flags(summary, missing_df, df=df)
 
     # 1. Проверка флага константности
     # ИСПРАВЛЕНО: используем '==' вместо 'is'
