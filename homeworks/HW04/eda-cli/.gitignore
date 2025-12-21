@@ -1,0 +1,27 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info/
+
+# IDE
+.idea/
+
+# Virtual environments
+.venv/
+
+# Test caches
+.pytest_cache/
+
+# Output directories (EDA reports etc.)
+reports*/
+reports_test*/
+
+# OS junk
+Thumbs.db
+Desktop.ini
+
+# (optional) env files
+.env
