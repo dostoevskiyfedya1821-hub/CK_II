@@ -5,71 +5,118 @@
 
 ## 1. Dataset
 
-- Какой датасет выбран: `S06-hw-dataset-02.csv`
-- Размер: (18000, 39)
-- Целевая переменная: `target` (классы и их доли)
-  - Класс 0: ~0.737
-  - Класс 1: ~0.263
-- Признаки: в основном числовые (`f01...f35` + `x_int_1`, `x_int_2`), столбец `id` исключён из признаков.
+- Какой датасет выбран: `S06-hw-dataset-04.csv`
+- Размер: (25000, 62)
+- Целевая переменная: `target` - бинарная классификация (0/1), сильный дисбаланс классов  
+  Доли классов: 0 - 0.9508, 1 - 0.0492
+- Признаки: в основном числовые признаки `f01...fXX`. Признак `id` (если присутствует) не использовался как фича.
 
 ## 2. Protocol
 
-- Разбиение: train/test = 80/20, `random_state=42`, `stratify=y`.
-- Подбор: CV только на train (GridSearchCV).
-  - Для DecisionTree / RandomForest: `StratifiedKFold(n_splits=5, shuffle=True, random_state=42)`, оптимизировали `roc_auc`.
-  - Для GradientBoosting: `StratifiedKFold(n_splits=3, shuffle=True, random_state=42)` (уменьшено до 3 фолдов для ускорения), оптимизировали `roc_auc`.
-  - Для Stacking: `StratifiedKFold(n_splits=5, shuffle=True, random_state=42)` внутри `StackingClassifier`.
-- Метрики: accuracy, F1, ROC-AUC.
-  - accuracy — базовая метрика “доля верных ответов”;
-  - F1 — важна при дисбалансе (учитывает precision/recall);
-  - ROC-AUC — основная для бинарной классификации, не зависит от выбранного порога и оценивает качество ранжирования по вероятностям.
+- Разбиение: train/test = 75% / 25%, `random_state=42`, `stratify=y`.
+- Подбор: гиперпараметры подбирались только на train через CV:  
+  `StratifiedKFold(n_splits=5, shuffle=True, random_state=42)`.
+- Оптимизация: подбор моделей выполнялся по метрике **ROC-AUC** (`GridSearchCV(scoring="roc_auc")`).
+- Метрики:
+  - **accuracy** - базовая метрика, но при дисбалансе может быть неинформативной;
+  - **F1-score** - полезна при дисбалансе, так как учитывает precision и recall;
+  - **ROC-AUC** - основная метрика для бинарной классификации, показывает качество ранжирования вероятностей;
+  - дополнительно **Average Precision (PR-AUC)** - особенно важна для fraud-like задач (dataset-04), где важно качество на редком классе.
+
+Test использовался один раз - только для финальной оценки.
 
 ## 3. Models
 
-Сравнивались следующие модели:
+Сравнивались модели:
 
-- DummyClassifier (`most_frequent`) — baseline.
-- LogisticRegression — baseline через `Pipeline(StandardScaler + LogisticRegression)`.
-- DecisionTreeClassifier:
-  - показано переобучение дерева без ограничений;
-  - контроль сложности и подбор гиперпараметров: `max_depth`, `min_samples_leaf`, `ccp_alpha` (GridSearchCV).
-- RandomForestClassifier:
-  - подбор гиперпараметров: `n_estimators`, `max_depth`, `min_samples_leaf`, `max_features` (GridSearchCV).
-- GradientBoostingClassifier:
-  - подбор гиперпараметров: `n_estimators`, `learning_rate`, `max_depth`, `subsample` (GridSearchCV).
-- (Опционально) StackingClassifier:
-  - базовые модели: RandomForest + GradientBoosting + LogisticRegression (pipeline со scaler);
-  - метамодель: LogisticRegression;
-  - корректная CV-логика обучения базовых моделей (`cv=StratifiedKFold(...)`).
+- **DummyClassifier(strategy="most_frequent")** - baseline, всегда предсказывает самый частый класс.
+- **LogisticRegression** - baseline, использовался `Pipeline(StandardScaler + LogisticRegression)`.
+- **DecisionTreeClassifier** - одиночное дерево решений, контролировали сложность через:
+  - `max_depth`
+  - `min_samples_leaf`
+- **RandomForestClassifier** - bagging деревьев + случайность по признакам:
+  - `n_estimators`
+  - `max_depth`
+  - `min_samples_leaf`
+  - `max_features`
+  Использовался `class_weight="balanced_subsample"`.
+- **GradientBoostingClassifier** - boosting:
+  - `n_estimators`
+  - `learning_rate`
+  - `max_depth`
+
+Подбор гиперпараметров выполнялся только на train через CV.
 
 ## 4. Results
 
-Финальные метрики на test:
+Финальные метрики на test (accuracy / F1 / ROC-AUC / AP):
 
-| Model | accuracy_test | f1_test | roc_auc_test |
-|---|---:|---:|---:|
-| Stacking | 0.9136 | 0.8262 | 0.9299 |
-| RandomForest (tuned) | 0.8900 | 0.7509 | 0.9287 |
-| GradientBoosting (tuned) | 0.8831 | 0.7490 | 0.9099 |
-| DecisionTree (tuned) | 0.8383 | 0.6576 | 0.8371 |
-| LogisticRegression | 0.8119 | 0.5607 | 0.7977 |
-| DecisionTree (unlimited) | 0.8083 | 0.6380 | 0.7552 |
-| Dummy (most_frequent) | 0.7375 | 0.0000 | 0.5000 |
+- Dummy_most_frequent:
+  - accuracy = 0.9509
+  - F1 = 0.0000
+  - ROC-AUC = 0.5000
+  - AP = 0.0491
 
-Победитель по согласованному критерию (ROC-AUC на test): **Stacking** (ROC-AUC = 0.9299).  
-RandomForest показал почти такое же качество по ROC-AUC, но Stacking дал заметно более высокий F1.
+- LogReg:
+  - accuracy = 0.7792
+  - F1 = 0.2573
+  - ROC-AUC = 0.8419
+  - AP = 0.4570
+
+- DecisionTree:
+  - accuracy = 0.8744
+  - F1 = 0.3592
+  - ROC-AUC = 0.8309
+  - AP = 0.4381
+
+- RandomForest:
+  - accuracy = 0.9686
+  - F1 = 0.5311
+  - ROC-AUC = 0.9014
+  - AP = 0.7798
+
+- GradientBoosting:
+  - accuracy = 0.9746
+  - F1 = 0.6851
+  - ROC-AUC = 0.8922
+  - AP = 0.7033
+
+Победитель по ROC-AUC:
+- **RandomForest** (ROC-AUC = 0.9014, AP = 0.7798)
+
+Краткое объяснение:
+- DummyClassifier показывает нижнюю границу качества и на дисбалансном датасете выдаёт высокую accuracy, но F1=0 (вообще не находит редкий класс).
+- LogisticRegression как baseline даёт неплохой ROC-AUC, но хуже справляется с нелинейностями.
+- Одиночное дерево даёт качество выше baseline, но менее устойчиво и хуже, чем ансамбли.
+- RandomForest показал лучший баланс качества (ROC-AUC и AP), так как уменьшает variance и устойчивее деревьев.
+- GradientBoosting показал хорошую F1, но по ROC-AUC уступил RandomForest.
 
 ## 5. Analysis
 
-- Устойчивость: ансамбли (RandomForest/Stacking) обычно дают меньший разброс метрик при смене `random_state`, чем одиночное дерево. Для проверки устойчивости можно сделать 5 прогонов с разными seed и сравнить разброс ROC-AUC/F1 хотя бы для 1–2 моделей.
-- Ошибки: confusion matrix для лучшей модели показывает баланс ошибок FP/FN и помогает понять, какие ошибки встречаются чаще (важно при умеренном дисбалансе классов).
-- Интерпретация: permutation importance для Stacking (top-15) показал, что наибольший вклад даёт признак `f16` (падение ROC-AUC ~0.044), далее `f19`, `f01`, `f07`, `f30` и др. (примерно 0.005–0.014). Это указывает, что основная часть сигнала сосредоточена в небольшом наборе признаков, а остальные дают более тонкие улучшения качества.
+- Устойчивость:
+  При смене `random_state` метрики могут немного меняться, что ожидаемо на дисбалансных данных.
+  В целом ансамбли (RandomForest / Boosting) показывают более устойчивые результаты, чем одиночное дерево.
+
+- Ошибки:
+  Confusion matrix для лучшей модели лежит в `artifacts/figures/cm_RandomForest.png`.
+  На дисбалансном датасете высокая accuracy не гарантирует хорошее качество на редком классе, поэтому дополнительно анализировались ROC и PR кривые.
+
+- Интерпретация:
+  Для лучшей модели (RandomForest) была посчитана permutation importance (top-15).
+  Наиболее важные признаки по permutation importance:
+  - `f58` (importance_mean ≈ 0.0103)
+  - `f53` (≈ 0.0097)
+  - `f13` (≈ 0.0076)
+  - `f47` (≈ 0.0068)
+  - `f25` (≈ 0.0054)
+
+  Это означает, что качество модели сильнее всего определяется небольшим набором признаков, а остальные дают меньший вклад.
 
 ## 6. Conclusion
 
-- Одиночное дерево решений легко переобучается (train accuracy = 1.0 при заметно более низком качестве на test).
-- Контроль сложности дерева (например, `max_depth`, `min_samples_leaf`, `ccp_alpha`) заметно улучшает обобщающую способность.
-- RandomForest (bagging + случайность по признакам) существенно снижает variance и даёт большой прирост ROC-AUC относительно одиночных моделей.
-- Boosting также улучшает качество, но в данном датасете уступил RandomForest и Stacking.
-- Stacking корректно комбинирует сильные модели и дал лучшую итоговую метрику ROC-AUC и высокий F1.
-- Честный ML-протокол (фиксированный train/test + CV на train + единые метрики) позволяет корректно сравнивать модели без утечек.
+- Дерево решений склонно к переобучению, поэтому важно ограничивать его сложность (`max_depth`, `min_samples_leaf`).
+- RandomForest снижает variance по сравнению с одиночным деревом и чаще даёт более устойчивое качество.
+- Boosting может давать сильные результаты, так как последовательно исправляет ошибки предыдущих моделей.
+- При сильном дисбалансе accuracy может быть обманчивой метрикой, поэтому важны ROC-AUC и PR-AUC.
+- Честный ML-протокол (train/test split + CV только на train) предотвращает утечку информации и завышенные результаты.
+- Сохранение артефактов (метрики, параметры, модель, графики) делает эксперимент воспроизводимым и удобным для проверки.
