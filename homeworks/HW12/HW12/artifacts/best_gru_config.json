@@ -1,0 +1,12 @@
+{
+    "model": "GRUForecast",
+    "window_size": 14,
+    "horizon": 1,
+    "hidden_size": 32,
+    "num_layers": 1,
+    "batch_size": 32,
+    "lr": 0.001,
+    "epochs": 30,
+    "seed": 42,
+    "scaler": "StandardScaler(target_only)"
+}

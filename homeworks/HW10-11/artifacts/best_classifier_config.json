@@ -1,16 +1,29 @@
 {
-  "dataset": "SVHN",
+  "dataset": "STL10",
   "seed": 42,
-  "selected_experiment_id": "C1",
-  "architecture": "SimpleCNN (no aug)",
-  "train_transform": "ToTensor + Normalize(SVHN)",
+  "best_experiment_id": "C4",
+  "architecture": "ResNet18 pretrained, layer4 + fc fine-tuning",
+  "img_size": 96,
+  "batch_size": 64,
+  "criterion": "CrossEntropyLoss",
   "optimizer": "Adam",
-  "lr": 0.001,
+  "learning_rate": 0.0001,
   "epochs": 5,
-  "split": {
-    "train": 3000,
-    "val": 1000,
-    "test": 2000,
-    "train_val_rule": "SVHN train split -> random 80/20, fixed seed, then subset for faster reproducible runs"
-  }
+  "train_transform": "ResNet18_Weights.DEFAULT.transforms()",
+  "val_transform": "ResNet18_Weights.DEFAULT.transforms()",
+  "augmentation": "Pretrained ResNet preprocessing",
+  "resnet_preprocess": "ResNet18_Weights.DEFAULT.transforms()",
+  "normalization": {
+    "mean": [
+      0.4467,
+      0.4398,
+      0.4066
+    ],
+    "std": [
+      0.2603,
+      0.2566,
+      0.2713
+    ]
+  },
+  "test_accuracy": 0.947875
 }
